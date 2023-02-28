@@ -8,9 +8,9 @@ import eu.kanade.tachiyomi.extension.all.nhentai.NHUtils.getNumPages
 import eu.kanade.tachiyomi.extension.all.nhentai.NHUtils.getTagDescription
 import eu.kanade.tachiyomi.extension.all.nhentai.NHUtils.getTags
 import eu.kanade.tachiyomi.extension.all.nhentai.NHUtils.getTime
-import eu.kanade.tachiyomi.lib.ratelimit.RateLimitInterceptor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.asObservableSuccess
+import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
@@ -18,8 +18,10 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
 import eu.kanade.tachiyomi.util.asJsoup
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -32,7 +34,7 @@ import uy.kohesive.injekt.api.get
 
 open class NHentai(
     override val lang: String,
-    private val nhLang: String
+    private val nhLang: String,
 ) : ConfigurableSource, ParsedHttpSource() {
 
     final override val baseUrl = "https://nhentai.net"
@@ -43,10 +45,13 @@ open class NHentai(
 
     override val supportsLatest = true
 
-    private val rateLimitInterceptor = RateLimitInterceptor(4)
     override val client: OkHttpClient = network.cloudflareClient.newBuilder()
-        .addNetworkInterceptor(rateLimitInterceptor)
+        .rateLimit(4)
         .build()
+
+    override fun headersBuilder(): Headers.Builder =
+        super.headersBuilder()
+            .set("User-Agent", USER_AGENT)
 
     private val preferences: SharedPreferences by lazy {
         Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
@@ -77,22 +82,23 @@ open class NHentai(
             }
         }
 
-        if (!preferences.contains(TITLE_PREF))
+        if (!preferences.contains(TITLE_PREF)) {
             preferences.edit().putString(TITLE_PREF, "full").apply()
+        }
 
         screen.addPreference(serverPref)
     }
 
     override fun latestUpdatesRequest(page: Int) = GET(if (nhLang.isBlank()) "$baseUrl/?page=$page" else "$baseUrl/language/$nhLang/?page=$page", headers)
 
-    override fun latestUpdatesSelector() = "#content .index-container:not(.index-popular) .gallery"
+    override fun latestUpdatesSelector() = "#content .container:not(.index-popular) .gallery"
 
     override fun latestUpdatesFromElement(element: Element) = SManga.create().apply {
         setUrlWithoutDomain(element.select("a").attr("href"))
         title = element.select("a > div").text().replace("\"", "").let {
             if (displayFullTitle) it.trim() else it.shortenTitle()
         }
-        thumbnail_url = element.select(".cover img").first().let { img ->
+        thumbnail_url = element.select(".cover img").first()!!.let { img ->
             if (img.hasAttr("data-src")) img.attr("abs:data-src") else img.attr("abs:src")
         }
     }
@@ -115,19 +121,13 @@ open class NHentai(
                     .asObservableSuccess()
                     .map { response -> searchMangaByIdParse(response, id) }
             }
-            query.isQueryIdNumbers() -> {
+            query.toIntOrNull() != null -> {
                 client.newCall(searchMangaByIdRequest(query))
                     .asObservableSuccess()
                     .map { response -> searchMangaByIdParse(response, query) }
             }
             else -> super.fetchSearchManga(page, query, filters)
         }
-    }
-
-    // The website redirects for any number <= 400000
-    private fun String.isQueryIdNumbers(): Boolean {
-        val int = this.toIntOrNull() ?: return false
-        return int <= 400000
     }
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
@@ -137,17 +137,19 @@ open class NHentai(
         val advQuery = combineQuery(filterList)
         val favoriteFilter = filterList.findInstance<FavoriteFilter>()
         val isOkayToSort = filterList.findInstance<UploadedFilter>()?.state?.isBlank() ?: true
+        val offsetPage =
+            filterList.findInstance<OffsetPageFilter>()?.state?.toIntOrNull()?.plus(page) ?: page
 
         if (favoriteFilter?.state == true) {
             val url = "$baseUrl/favorites".toHttpUrlOrNull()!!.newBuilder()
                 .addQueryParameter("q", "$fixedQuery $advQuery")
-                .addQueryParameter("page", page.toString())
+                .addQueryParameter("page", offsetPage.toString())
 
             return GET(url.toString(), headers)
         } else {
             val url = "$baseUrl/search".toHttpUrlOrNull()!!.newBuilder()
                 .addQueryParameter("q", "$fixedQuery $nhLangSearch$advQuery")
-                .addQueryParameter("page", page.toString())
+                .addQueryParameter("page", offsetPage.toString())
 
             if (isOkayToSort) {
                 filterList.findInstance<SortFilter>()?.let { f ->
@@ -222,6 +224,7 @@ open class NHentai(
                 .plus("Favorited by: ${document.select("div#info i.fa-heart + span span").text().removeSurrounding("(", ")")}\n")
                 .plus(getTagDescription(document))
             genre = getTags(document)
+            update_strategy = UpdateStrategy.ONLY_FETCH_ONCE
         }
     }
 
@@ -235,7 +238,7 @@ open class NHentai(
                 scanlator = getGroups(document)
                 date_upload = getTime(document)
                 setUrlWithoutDomain(response.request.url.encodedPath)
-            }
+            },
         )
     }
 
@@ -244,11 +247,11 @@ open class NHentai(
     override fun chapterListSelector() = throw UnsupportedOperationException("Not used")
 
     override fun pageListParse(document: Document): List<Page> {
-        val script = document.select("script:containsData(media_server)").first().data()
-        val media_server = Regex("""media_server\s*:\s*(\d+)""").find(script)?.groupValues!!.get(1)
+        val script = document.select("script:containsData(media_server)").first()!!.data()
+        val mediaServer = Regex("""media_server\s*:\s*(\d+)""").find(script)?.groupValues!![1]
 
         return document.select("div.thumbs a > img").mapIndexed { i, img ->
-            Page(i, "", img.attr("abs:data-src").replace("t.nh", "i.nh").replace("t\\d+.nh".toRegex(), "i$media_server.nh").replace("t.", "."))
+            Page(i, "", img.attr("abs:data-src").replace("t.nh", "i.nh").replace("t\\d+.nh".toRegex(), "i$mediaServer.nh").replace("t.", "."))
         }
     }
 
@@ -269,8 +272,9 @@ open class NHentai(
 
         Filter.Separator(),
         SortFilter(),
+        OffsetPageFilter(),
         Filter.Header("Sort is ignored if favorites only"),
-        FavoriteFilter()
+        FavoriteFilter(),
     )
 
     class TagFilter : AdvSearchEntryFilter("Tags")
@@ -283,6 +287,8 @@ open class NHentai(
     class PagesFilter : AdvSearchEntryFilter("Pages")
     open class AdvSearchEntryFilter(name: String) : Filter.Text(name)
 
+    class OffsetPageFilter : Filter.Text("Offset results by # pages")
+
     override fun imageUrlParse(document: Document) = throw UnsupportedOperationException("Not used")
 
     private class FavoriteFilter : Filter.CheckBox("Show favorites only", false)
@@ -293,8 +299,8 @@ open class NHentai(
             Pair("Popular: All Time", "popular"),
             Pair("Popular: Week", "popular-week"),
             Pair("Popular: Today", "popular-today"),
-            Pair("Recent", "date")
-        )
+            Pair("Recent", "date"),
+        ),
     )
 
     private open class UriPartFilter(displayName: String, val vals: Array<Pair<String, String>>) :
@@ -307,5 +313,6 @@ open class NHentai(
     companion object {
         const val PREFIX_ID_SEARCH = "id:"
         private const val TITLE_PREF = "Display manga title as:"
+        private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Mobile Safari/537.36"
     }
 }

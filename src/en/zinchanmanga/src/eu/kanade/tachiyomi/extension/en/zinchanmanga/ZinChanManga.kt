@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.extension.en.zinchanmanga
 
-import eu.kanade.tachiyomi.lib.ratelimit.RateLimitInterceptor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.asObservableSuccess
+import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -28,7 +28,8 @@ class ZinChanManga : HttpSource() {
     private val apiClient by lazy {
         network.client.newBuilder()
             .sslSocketFactory(ZinChanCert.factory, ZinChanCert.manager)
-            .addInterceptor(RateLimitInterceptor(2)).build()
+            .rateLimit(5, 50)
+            .build()
     }
 
     private val apiHeaders by lazy {
@@ -88,7 +89,7 @@ class ZinChanManga : HttpSource() {
 
     override fun getFilterList() = FilterList(
         ZinChanGenre.Companion.Note,
-        ZinChanGenre(ZinChanGenre.genres)
+        ZinChanGenre(ZinChanGenre.genres),
     )
 
     private inline val SManga.id: String
@@ -117,7 +118,7 @@ class ZinChanManga : HttpSource() {
         }!!
 
     private inline fun <reified T> Response.parse() =
-        json.decodeFromString<T>(body!!.string())
+        json.decodeFromString<T>(body.string())
 
     override fun latestUpdatesParse(response: Response) =
         throw UnsupportedOperationException("Not used")

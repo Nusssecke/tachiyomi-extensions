@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.extension.ar.mangaae
 
-import eu.kanade.tachiyomi.lib.ratelimit.RateLimitInterceptor
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
@@ -25,10 +25,8 @@ class MangaAe : ParsedHttpSource() {
 
     override val supportsLatest = true
 
-    private val rateLimitInterceptor = RateLimitInterceptor(2)
-
     override val client: OkHttpClient = network.cloudflareClient.newBuilder()
-        .addNetworkInterceptor(rateLimitInterceptor)
+        .rateLimit(2)
         .build()
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
@@ -72,7 +70,7 @@ class MangaAe : ParsedHttpSource() {
             lazysrc
         }
         setUrlWithoutDomain(element.select("a:has(img)").attr("href"))
-        title = element.select("a").last().text()
+        title = element.select("a").last()!!.text()
     }
 
     override fun latestUpdatesNextPageSelector(): String? = null
@@ -87,6 +85,7 @@ class MangaAe : ParsedHttpSource() {
                         url += "|order:${filter.toUriPart()}"
                     }
                 }
+                else -> {}
             }
         }
         url += "|arrange:minus"
@@ -101,7 +100,7 @@ class MangaAe : ParsedHttpSource() {
 
     // Manga summary page
     override fun mangaDetailsParse(document: Document): SManga = SManga.create().apply {
-        val infoElement = document.select("div.indexcontainer").first()
+        val infoElement = document.select("div.indexcontainer").first()!!
         title = infoElement.select("h1.EnglishName").text().removeSurrounding("(", ")")
         author = infoElement.select("div.manga-details-author h4")[0].text()
         artist = author
@@ -134,7 +133,7 @@ class MangaAe : ParsedHttpSource() {
     // Pages
     override fun pageListParse(document: Document): List<Page> {
         val pages = mutableListOf<Page>()
-        document.select("div#showchaptercontainer img")?.forEach {
+        document.select("div#showchaptercontainer img").forEach {
             pages.add(Page(pages.size, "", it.attr("src")))
         }
         return pages
@@ -154,11 +153,11 @@ class MangaAe : ParsedHttpSource() {
             Pair("اسم المانجا", "english_name"),
             Pair("تاريخ النشر", "release_date"),
             Pair("عدد الفصول", "chapter_count"),
-            Pair("الحالة", "status")
-        )
+            Pair("الحالة", "status"),
+        ),
     )
 
     override fun getFilterList() = FilterList(
-        OrderByFilter()
+        OrderByFilter(),
     )
 }

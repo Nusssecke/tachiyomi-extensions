@@ -1,17 +1,16 @@
 package eu.kanade.tachiyomi.extension.en.firstkissmangaclub
 
-import eu.kanade.tachiyomi.lib.ratelimit.RateLimitInterceptor
 import eu.kanade.tachiyomi.multisrc.madara.Madara
+import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import java.util.concurrent.TimeUnit
 
 class FirstKissMangaClub : Madara(
     "1stKissManga.Club",
     "https://1stkissmanga.club",
-    "en"
+    "en",
 ) {
-    private val rateLimitInterceptor = RateLimitInterceptor(1, 2, TimeUnit.SECONDS)
 
     override val client = network.cloudflareClient.newBuilder()
-        .addNetworkInterceptor(rateLimitInterceptor)
+        .rateLimit(1, 3, TimeUnit.SECONDS)
         .build()
 }

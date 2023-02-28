@@ -10,7 +10,7 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.nio.charset.Charset
 
-class WeLoveManga : FMReader("WeLoveManga", "https://weloma.net", "ja") {
+class WeLoveManga : FMReader("WeLoveManga", "https://weloma.art", "ja") {
     // Formerly "RawLH"
     override val id = 7595224096258102519
 
@@ -28,6 +28,7 @@ class WeLoveManga : FMReader("WeLoveManga", "https://weloma.net", "ja") {
             Page(i, document.location(), img.decoded())
         }
     }
+
     // Referer needs to be chapter URL
     override fun imageRequest(page: Page): Request = GET(page.imageUrl!!, headersBuilder().set("Referer", page.url).build())
 }

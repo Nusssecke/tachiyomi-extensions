@@ -84,7 +84,7 @@ class MantaComics : HttpSource() {
                 date_upload = it.timestamp
                 chapter_number = it.ord.toFloat()
             }
-        }
+        }.reversed()
 
     override fun fetchChapterList(manga: SManga) =
         chapterListRequest(manga).fetch(::chapterListParse)
@@ -123,6 +123,6 @@ class MantaComics : HttpSource() {
 
     private inline fun <reified T> Response.parse(key: String = "data") =
         json.decodeFromJsonElement<T>(
-            json.parseToJsonElement(body!!.string()).jsonObject[key]!!
+            json.parseToJsonElement(body.string()).jsonObject[key]!!,
         )
 }

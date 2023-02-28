@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.extension.all.mangatoon
 
-import eu.kanade.tachiyomi.lib.ratelimit.RateLimitInterceptor
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
 
 open class MangaToon(
     final override val lang: String,
-    private val urlLang: String = lang
+    private val urlLang: String = lang,
 ) : ParsedHttpSource() {
 
     override val name = "MangaToon (Limited)"
@@ -34,7 +34,7 @@ open class MangaToon(
     override val supportsLatest = true
 
     override val client: OkHttpClient = network.client.newBuilder()
-        .addInterceptor(RateLimitInterceptor(1, 1, TimeUnit.SECONDS))
+        .rateLimit(1, 1, TimeUnit.SECONDS)
         .build()
 
     private val locale by lazy { Locale.forLanguageTag(lang) }
@@ -60,7 +60,7 @@ open class MangaToon(
     override fun popularMangaFromElement(element: Element): SManga = SManga.create().apply {
         title = element.select("div.content-title").text().trim()
         thumbnail_url = element.select("img").attr("abs:src").toNormalPosterUrl()
-        url = element.selectFirst("a").attr("href")
+        url = element.selectFirst("a")!!.attr("href")
     }
 
     override fun popularMangaNextPageSelector() = "span.next"
@@ -88,7 +88,7 @@ open class MangaToon(
     override fun searchMangaFromElement(element: Element): SManga = SManga.create().apply {
         title = element.select("div.recommend-comics-title").text().trim()
         thumbnail_url = element.select("img").attr("abs:src").toNormalPosterUrl()
-        url = element.selectFirst("a").attr("href")
+        url = element.selectFirst("a")!!.attr("href")
     }
 
     override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
@@ -160,7 +160,7 @@ open class MangaToon(
 
     private fun String.toNormalPosterUrl(): String = replace(POSTER_SUFFIX, "$1")
 
-    private fun String.toStatus(): Int = when (toLowerCase(locale)) {
+    private fun String.toStatus(): Int = when (lowercase(locale)) {
         in ONGOING_STATUS -> SManga.ONGOING
         in COMPLETED_STATUS -> SManga.COMPLETED
         else -> SManga.UNKNOWN
@@ -169,11 +169,18 @@ open class MangaToon(
     companion object {
         private val ONGOING_STATUS = listOf(
             "连载", "on going", "sedang berlangsung", "tiếp tục cập nhật",
-            "en proceso", "atualizando", "เซเรียล", "en cours", "連載中"
+            "en proceso", "atualizando", "เซเรียล", "en cours", "連載中",
         )
 
         private val COMPLETED_STATUS = listOf(
-            "完结", "completed", "tamat", "đã full", "terminada", "concluído", "จบ", "fin"
+            "完结",
+            "completed",
+            "tamat",
+            "đã full",
+            "terminada",
+            "concluído",
+            "จบ",
+            "fin",
         )
 
         private val DATE_FORMAT by lazy {

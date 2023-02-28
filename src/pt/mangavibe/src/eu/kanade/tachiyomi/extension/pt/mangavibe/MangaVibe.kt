@@ -1,8 +1,7 @@
 package eu.kanade.tachiyomi.extension.pt.mangavibe
 
-import eu.kanade.tachiyomi.lib.ratelimit.RateLimitInterceptor
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.asObservableSuccess
+import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -39,7 +38,7 @@ class MangaVibe : HttpSource() {
     override val supportsLatest = true
 
     override val client: OkHttpClient = network.cloudflareClient.newBuilder()
-        .addInterceptor(RateLimitInterceptor(1, 2, TimeUnit.SECONDS))
+        .rateLimit(1, 2, TimeUnit.SECONDS)
         .addInterceptor(::directoryCacheIntercept)
         .build()
 
@@ -61,7 +60,7 @@ class MangaVibe : HttpSource() {
     }
 
     override fun popularMangaParse(response: Response): MangasPage {
-        val result = json.decodeFromString<MangaVibePopularDto>(response.body!!.string())
+        val result = json.decodeFromString<MangaVibePopularDto>(response.body.string())
 
         if (result.data.isNullOrEmpty()) {
             return MangasPage(emptyList(), hasNextPage = false)
@@ -96,7 +95,7 @@ class MangaVibe : HttpSource() {
     }
 
     override fun latestUpdatesParse(response: Response): MangasPage {
-        val result = json.decodeFromString<MangaVibeLatestDto>(response.body!!.string())
+        val result = json.decodeFromString<MangaVibeLatestDto>(response.body.string())
 
         if (result.data.isNullOrEmpty()) {
             return MangasPage(emptyList(), hasNextPage = false)
@@ -138,7 +137,7 @@ class MangaVibe : HttpSource() {
     }
 
     override fun searchMangaParse(response: Response): MangasPage {
-        val result = json.decodeFromString<MangaVibePopularDto>(response.body!!.string())
+        val result = json.decodeFromString<MangaVibePopularDto>(response.body.string())
 
         if (result.data.isNullOrEmpty()) {
             return MangasPage(emptyList(), hasNextPage = false)
@@ -160,16 +159,9 @@ class MangaVibe : HttpSource() {
 
     private fun searchMangaFromObject(comic: MangaVibeComicDto): SManga = popularMangaFromObject(comic)
 
-    // Workaround to allow "Open in browser" use the real URL.
-    override fun fetchMangaDetails(manga: SManga): Observable<SManga> {
-        return client.newCall(mangaDetailsApiRequest(manga))
-            .asObservableSuccess()
-            .map { response ->
-                mangaDetailsParse(response).apply { initialized = true }
-            }
-    }
+    override fun getMangaUrl(manga: SManga): String = baseUrl + manga.url
 
-    private fun mangaDetailsApiRequest(manga: SManga): Request {
+    override fun mangaDetailsRequest(manga: SManga): Request {
         val comicId = manga.url.substringAfter("/manga/")
             .substringBefore("/")
 
@@ -183,7 +175,7 @@ class MangaVibe : HttpSource() {
     }
 
     override fun mangaDetailsParse(response: Response): SManga {
-        val result = json.decodeFromString<MangaVibePopularDto>(response.body!!.string())
+        val result = json.decodeFromString<MangaVibePopularDto>(response.body.string())
 
         if (result.data.isNullOrEmpty()) {
             throw Exception(COULD_NOT_PARSE_THE_MANGA)
@@ -216,7 +208,7 @@ class MangaVibe : HttpSource() {
     }
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        val result = json.decodeFromString<MangaVibeChapterListDto>(response.body!!.string())
+        val result = json.decodeFromString<MangaVibeChapterListDto>(response.body.string())
 
         if (result.data.isNullOrEmpty()) {
             return emptyList()
@@ -279,8 +271,11 @@ class MangaVibe : HttpSource() {
             return chain.proceed(chain.request())
         }
 
-        val directoryType = if (chain.request().url.queryParameter("Ordem") == null)
-            POPULAR_KEY else LATEST_KEY
+        val directoryType = if (chain.request().url.queryParameter("Ordem") == null) {
+            POPULAR_KEY
+        } else {
+            LATEST_KEY
+        }
         val page = chain.request().header("X-Page")?.toInt()
 
         if (directoryCache.containsKey(directoryType) && page != null && page > 1) {
@@ -297,8 +292,8 @@ class MangaVibe : HttpSource() {
         }
 
         val response = chain.proceed(chain.request())
-        val responseContentType = response.body!!.contentType()
-        val responseString = response.body!!.string()
+        val responseContentType = response.body.contentType()
+        val responseString = response.body.string()
 
         directoryCache[directoryType] = responseString
 
@@ -326,7 +321,7 @@ class MangaVibe : HttpSource() {
             .replace("[^\\p{ASCII}]".toRegex(), "")
             .replace("[^a-zA-Z0-9\\s]+".toRegex(), "").trim()
             .replace("\\s+".toRegex(), "-")
-            .toLowerCase(Locale("pt", "BR"))
+            .lowercase(Locale("pt", "BR"))
     }
 
     companion object {
